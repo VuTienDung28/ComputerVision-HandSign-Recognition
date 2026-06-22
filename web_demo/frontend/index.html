@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hand Sign Recognition — Live Demo</title>
+    <meta
+      name="description"
+      content="Real-time ASL hand sign recognition using LSTM + MediaPipe, served via FastAPI WebSocket."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <!-- ═══════════════════════════ HEADER ════════════════════════════════════════ -->
+    <header class="header">
+      <div class="header-inner">
+        <div class="logo">
+          <div class="logo-icon">✋</div>
+          <div class="logo-text">
+            <h1>Hand Sign Recognition</h1>
+            <p>LSTM + MediaPipe · Real-time Demo</p>
+          </div>
+        </div>
+
+        <div class="header-right">
+          <div class="conn-badge" id="connBadge">
+            <span class="conn-dot" id="connDot"></span>
+            <span id="connLabel">Connecting…</span>
+          </div>
+          <div class="state-badge" id="stateBadge" data-state="waiting">
+            <span class="state-dot"></span>
+            <span id="stateLabel">WAITING</span>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- ═══════════════════════════ MAIN ══════════════════════════════════════════ -->
+    <main class="main">
+      <!-- ──────── Camera Column ──────── -->
+      <section class="camera-col">
+        <div class="camera-card" id="cameraCard">
+          <!-- video + canvas stack -->
+          <div class="video-wrapper">
+            <video id="video" autoplay playsinline muted></video>
+            <canvas id="canvas"></canvas>
+
+            <!-- overlays -->
+            <div class="overlay overlay-countdown" id="overlayCountdown">
+              <div class="cd-circle">
+                <svg class="cd-ring" viewBox="0 0 120 120">
+                  <circle class="cd-ring-bg" cx="60" cy="60" r="52" />
+                  <circle
+                    class="cd-ring-fill"
+                    id="cdRingFill"
+                    cx="60"
+                    cy="60"
+                    r="52"
+                  />
+                </svg>
+                <span class="cd-number" id="cdNumber">3</span>
+              </div>
+              <span class="cd-text">GET READY</span>
+            </div>
+
+            <div class="overlay overlay-recording" id="overlayRecording">
+              <div class="rec-header">
+                <span class="rec-dot-anim"></span>
+                <span class="rec-label">COLLECTING FRAMES</span>
+              </div>
+              <div class="rec-count" id="recCount">0 <span>/ 30</span></div>
+              <div class="progress-track">
+                <div class="progress-fill" id="progressFill"></div>
+              </div>
+            </div>
+
+            <div class="overlay overlay-nocam" id="overlayNoCam">
+              <span class="nocam-icon">📷</span>
+              <p>Camera unavailable.<br />Please allow camera access.</p>
+            </div>
+          </div>
+          <!-- /video-wrapper -->
+
+          <!-- Controls bar -->
+          <div class="controls-bar">
+            <div class="ctrl-group">
+              <!-- Toggle button: Start / Pause / Resume -->
+              <button
+                class="btn-toggle"
+                id="btnToggle"
+                onclick="handleToggle()"
+              >
+                <span class="btn-icon" id="btnToggleIcon">▶</span>
+                <span id="btnToggleLabel">Start Continuous</span>
+                <kbd>Space</kbd>
+              </button>
+              <!-- Stop button -->
+              <button
+                class="btn-stop"
+                id="btnStop"
+                onclick="handleStop()"
+                disabled
+              >
+                <span>⏹</span>
+                <span>Stop</span>
+              </button>
+            </div>
+            <div class="bar-right">
+              <div class="session-stats" id="sessionStats">
+                <span>Win: <strong id="statWindows">0</strong></span>
+                <span class="stat-sep">|</span>
+                <span id="statTime">00:00</span>
+              </div>
+              <div class="fps-badge" id="fpsBadge">— fps</div>
+            </div>
+          </div>
+        </div>
+        <!-- /camera-card -->
+
+        <!-- Model info strip -->
+        <div class="info-strip">
+          <div class="info-chip">
+            <span>Architecture</span><strong>LSTM</strong>
+          </div>
+          <div class="info-chip">
+            <span>Input</span><strong>30 × 126</strong>
+          </div>
+          <div class="info-chip">
+            <span>Hands</span><strong>MediaPipe</strong>
+          </div>
+          <div class="info-chip">
+            <span>Classes</span><strong>26 Signs</strong>
+          </div>
+        </div>
+      </section>
+      <!-- /camera-col -->
+
+      <!-- ──────── Info Column ──────── -->
+      <section class="info-col">
+        <!-- Result card -->
+        <div class="result-card" id="resultCard">
+          <div class="result-placeholder" id="resultPlaceholder">
+            <div class="placeholder-icon">🤲</div>
+            <p>Show a hand sign and press <strong>Start</strong></p>
+            <p class="hint">or press <kbd>Space</kbd></p>
+          </div>
+          <div class="result-body" id="resultBody" style="display: none">
+            <div class="result-label" id="resultLabel">—</div>
+            <div class="confidence-row">
+              <span class="conf-label">Confidence</span>
+              <span class="conf-value" id="confValue">0%</span>
+            </div>
+            <div class="conf-track">
+              <div class="conf-fill" id="confFill"></div>
+            </div>
+            <div class="score-grid" id="scoreGrid"></div>
+          </div>
+        </div>
+
+        <!-- Supported signs -->
+        <div class="signs-card">
+          <h2 class="card-title">Supported Signs</h2>
+          <div class="signs-grid" id="signsGrid"></div>
+        </div>
+
+        <!-- Live Transcript -->
+        <div class="transcript-card">
+          <div class="transcript-header">
+            <h2 class="card-title">Live Transcript</h2>
+            <div class="transcript-actions">
+              <span class="conf-thresh-label"
+                >Min: <strong id="threshVal">85%</strong></span
+              >
+              <input
+                type="range"
+                id="threshSlider"
+                min="50"
+                max="95"
+                value="85"
+                step="5"
+                class="thresh-slider"
+                oninput="updateThreshold(this.value)"
+              />
+              <button class="btn-clear" onclick="clearTranscript()">
+                Clear
+              </button>
+            </div>
+          </div>
+          <div class="transcript-chips" id="transcriptChips">
+            <span class="transcript-empty">Recognition will appear here…</span>
+          </div>
+          <div class="transcript-meta">
+            <span id="transcriptCount">0 signs</span>
+            <span class="transcript-dedup-note"
+              >Consecutive duplicates filtered</span
+            >
+          </div>
+        </div>
+
+        <!-- History -->
+        <div class="history-card">
+          <div class="history-header">
+            <h2 class="card-title">History</h2>
+            <button class="btn-clear" onclick="clearHistory()">Clear</button>
+          </div>
+          <ul class="history-list" id="historyList">
+            <li class="history-empty">No predictions yet…</li>
+          </ul>
+        </div>
+      </section>
+      <!-- /info-col -->
+    </main>
+
+    <!-- ═══════════════════════ REFERENCE GUIDE ═══════════════════════════════════ -->
+    <section class="guide-section">
+      <div class="guide-inner">
+        <div class="guide-header" id="guideToggle" onclick="toggleGuide()">
+          <div class="guide-title-group">
+            <span class="guide-icon">📖</span>
+            <div>
+              <h2>Hand Sign Reference Guide</h2>
+              <p>
+                All 26 supported gestures — hold your sign steady during
+                collection
+              </p>
+            </div>
+          </div>
+          <button
+            class="guide-toggle-btn"
+            id="guideToggleBtn"
+            aria-label="Toggle guide"
+          >
+            <svg
+              id="guideChevron"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+        </div>
+
+        <div class="guide-body" id="guideBody">
+          <div class="guide-image-wrap">
+            <img
+              src="/static/hand_sign.png"
+              alt="Hand sign reference chart showing all 26 supported gestures: A, B, Bye, C, D, Everything, G, Heart, Help, Hi, I, I love you, L, Like, Love, M, N, No, O, Ok, Q, Sorry, Take Photo, U, Vy, Y"
+              class="guide-img"
+              id="guideImg"
+              loading="lazy"
+            />
+            <div class="guide-labels">
+              <span>A</span><span>B</span><span>Bye</span><span>C</span
+              ><span>D</span><span>Everything</span><span>G</span
+              ><span>Heart</span><span>Help</span><span>Hi</span><span>I</span
+              ><span>I love you</span><span>L</span><span>Like</span
+              ><span>Love</span><span>M</span><span>N</span><span>No</span
+              ><span>O</span><span>Ok</span><span>Q</span><span>Sorry</span
+              ><span>Take Photo</span><span>U</span><span>Vy</span
+              ><span>Y</span>
+
+              <!-- ['A', 'B', 'Bye', 'C', 'D', 'Everything', 'G', 'Heart', 'Help', 'Hi', 'I',
+            'I love you', 'L', 'Like', 'Love', 'M', 'N', 'No', 'O', 'Ok', 'Q', 'Sorry',
+            'Take Photo', 'U', 'Vy', 'Y'] -->
+            </div>
+          </div>
+          <div class="guide-tips">
+            <div class="tip-card">
+              <span class="tip-icon">💡</span>
+              <div>
+                <strong>Tip 1 — Steady hand</strong>
+                <p>
+                  Keep your hand still during the 3-second countdown and while
+                  collecting frames.
+                </p>
+              </div>
+            </div>
+            <div class="tip-card">
+              <span class="tip-icon">🎯</span>
+              <div>
+                <strong>Tip 2 — Distance</strong>
+                <p>
+                  Position your hand ~40–60 cm from the camera so all fingers
+                  are clearly visible.
+                </p>
+              </div>
+            </div>
+            <div class="tip-card">
+              <span class="tip-icon">💡</span>
+              <div>
+                <strong>Tip 3 — Lighting</strong>
+                <p>
+                  Good front lighting improves detection accuracy significantly.
+                </p>
+              </div>
+            </div>
+            <div class="tip-card">
+              <span class="tip-icon">⌨️</span>
+              <div>
+                <strong>Shortcut</strong>
+                <p>
+                  Press <kbd>Space</kbd> to start recognition without clicking
+                  the button.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- MediaPipe CDN -->
+    <script
+      src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"
+      crossorigin="anonymous"
+    ></script>
+    <script src="/static/app.js?v=2"></script>
+  </body>
+</html>
